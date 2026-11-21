@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import NextImage from "next/image";
 import { useRouter } from "next/navigation";
 import { useWorkflowStore, Space } from "@/lib/store";
-import { makeUGCTemplate } from "@/lib/templates";
+import { makeUGCTemplate, makePersonTemplate } from "@/lib/templates";
 import { timeAgo } from "@/lib/useSpaceSync";
 import { WorkflowHero } from "@/components/WorkflowHero";
 import DotCanvasBackground from "@/components/ui/DotCanvasBackground";
@@ -197,6 +197,13 @@ const CSS = `
 
 // ── Template card ─────────────────────────────────────────────────────────────
 
+const PERSON_TEMPLATE_PREVIEWS = [
+  "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/avatar.png",
+  "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/1.png",
+  "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/2.png",
+  "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/3.png",
+];
+
 const TEMPLATE_PREVIEWS = [
   "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/1.png",
   "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/2.png",
@@ -204,7 +211,19 @@ const TEMPLATE_PREVIEWS = [
   "https://pub-73a59b956f1c4a7db2934522c13d8027.r2.dev/workflow-template/4.png",
 ];
 
-function TemplateCard({ onLoad, onReset }: { onLoad: () => void; onReset: (e: React.MouseEvent) => void }) {
+function TemplateCard({
+  title,
+  subtitle,
+  previews,
+  onLoad,
+  onReset,
+}: {
+  title: string;
+  subtitle: string;
+  previews: string[];
+  onLoad: () => void;
+  onReset: (e: React.MouseEvent) => void;
+}) {
   return (
     <div
       className="wsd-tmpl"
@@ -214,7 +233,7 @@ function TemplateCard({ onLoad, onReset }: { onLoad: () => void; onReset: (e: Re
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onLoad(); }}
     >
       <div className="wsd-thumbs">
-        {TEMPLATE_PREVIEWS.map((url, i) => (
+        {previews.map((url, i) => (
           <div key={i} className="wsd-thumb-cell">
             <NextImage src={url} alt="" fill sizes="160px" style={{ objectFit: "cover" }} />
           </div>
@@ -228,7 +247,7 @@ function TemplateCard({ onLoad, onReset }: { onLoad: () => void; onReset: (e: Re
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: "15px", fontWeight: 600, color: "#fff", letterSpacing: "-0.015em" }}>
-            UGC Template
+            {title}
           </div>
           <button
             onClick={onReset}
@@ -252,7 +271,7 @@ function TemplateCard({ onLoad, onReset }: { onLoad: () => void; onReset: (e: Re
           fontSize: "10px", fontWeight: 500, letterSpacing: "0.04em",
           color: "rgba(99,102,241,0.6)", textTransform: "uppercase",
         }}>
-          <span>4× Image → 4× Video</span>
+          <span>{subtitle}</span>
         </div>
       </div>
     </div>
@@ -679,28 +698,37 @@ export default function WorkflowDashboard() {
   };
 
   const TEMPLATE_NAME = "UGC Template";
+  const PERSON_TEMPLATE_NAME = "Person Template";
 
-  const spawnFreshTemplate = () => {
+  const spawnFresh = (name: string, build: () => Parameters<typeof createSpace>[1]) => {
     const store = useWorkflowStore.getState();
-    const existing = store.spaces.find((sp) => sp.name === TEMPLATE_NAME);
+    const existing = store.spaces.find((sp) => sp.name === name);
     if (existing) {
       if (store.spaces.length === 1) store.createSpace("Space 1");
       deleteSpace(existing.id);
     }
-    createSpace(TEMPLATE_NAME, makeUGCTemplate());
+    createSpace(name, build());
     const newId = useWorkflowStore.getState().activeSpaceId;
     router.push(`/workflow/${newId}`);
   };
 
-  const handleLoadTemplate = () => spawnFreshTemplate();
+  const spawnFreshTemplate = () => spawnFresh(TEMPLATE_NAME, makeUGCTemplate);
+  const spawnFreshPersonTemplate = () => spawnFresh(PERSON_TEMPLATE_NAME, () => makePersonTemplate());
 
+  const handleLoadTemplate = () => spawnFreshTemplate();
   const handleResetTemplate = (e: React.MouseEvent) => {
     e.stopPropagation();
     spawnFreshTemplate();
   };
 
+  const handleLoadPersonTemplate = () => spawnFreshPersonTemplate();
+  const handleResetPersonTemplate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    spawnFreshPersonTemplate();
+  };
+
   const sorted = [...spaces]
-    .filter((sp) => sp.nodes.length > 0 && sp.name !== TEMPLATE_NAME)
+    .filter((sp) => sp.nodes.length > 0 && sp.name !== TEMPLATE_NAME && sp.name !== PERSON_TEMPLATE_NAME)
     .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
 
   return (
@@ -777,7 +805,20 @@ export default function WorkflowDashboard() {
           padding: "0 32px",
         }}>
           <CreateCard onCreate={handleCreate} />
-          <TemplateCard onLoad={handleLoadTemplate} onReset={handleResetTemplate} />
+          <TemplateCard
+            title="UGC Template"
+            subtitle="4× Image → 4× Video"
+            previews={TEMPLATE_PREVIEWS}
+            onLoad={handleLoadTemplate}
+            onReset={handleResetTemplate}
+          />
+          <TemplateCard
+            title="Person Template"
+            subtitle="Reference photos → 4× Photo → 4× Video"
+            previews={PERSON_TEMPLATE_PREVIEWS}
+            onLoad={handleLoadPersonTemplate}
+            onReset={handleResetPersonTemplate}
+          />
           {sorted.map((sp) => (
             <SpaceCard key={sp.id} space={sp} onOpen={() => openSpace(sp.id)} />
           ))}

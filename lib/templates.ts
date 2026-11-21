@@ -266,3 +266,179 @@ export function makeUGCTemplate(): {
     nodeCounters: { promptNode: 8, generateNode: 4, videoGeneratorNode: 4, imageInputNode: 1 },
   };
 }
+
+// ── Person template: N reference photos of one person → 4× Image Gen → 4× Video Gen ──
+// Same 4×4 column layout as the UGC starter, except the single avatar node is
+// replaced by every reference photo of the person, each wired into all four image
+// gens. `makePersonTemplate(refs)` is what the person-refs skill injects after it
+// has gathered a target's photos; with no refs it falls back to the UGC previews.
+
+const PERSON_IMG_PROMPTS = [
+  "A photorealistic portrait of the specific person in the reference images. Head and shoulders, looking at the camera, natural skin texture, soft window light, shallow depth of field, 85mm lens. Keep their exact facial features, hair and proportions.",
+  "A photorealistic medium close-up of the same person, three-quarter angle, casual daylight, natural colour, sharp focus on the eyes. Keep their exact facial features, hair and proportions.",
+  "A photorealistic environmental portrait of the same person, waist up, mid-action in a real place, natural light, candid feel. Keep their exact facial features, hair and proportions.",
+  "A photorealistic full-body shot of the same person, standing, relaxed posture, plain background, soft even lighting. Keep their exact facial features, hair, build and proportions.",
+];
+
+const PERSON_VID_PROMPTS = [
+  "Static, locked-off shot using the exact same framing as the reference. Keep the facial proportions, eye shape and hairstyle identical. The person faces the camera and speaks directly to it, natural micro-expressions and head movement only.",
+  "Slow push-in on the same person as they speak to camera. Keep facial proportions, eye shape and hairstyle identical. Natural skin texture and subtle shadows.",
+  "Same person, slight handheld feel, looking at the camera mid-sentence. Keep facial proportions, eye shape and hairstyle identical. Candid, natural delivery.",
+  "Same person, medium shot, speaking to camera with a calm confident tone. Keep facial proportions, eye shape and hairstyle identical. Stable framing throughout.",
+];
+
+/** Every distinct non-empty reference URL, capped so the canvas stays readable. */
+function personRefs(refs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of refs) {
+    if (typeof r !== "string" || !r || seen.has(r)) continue;
+    seen.add(r);
+    out.push(r);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+/**
+ * Build a canvas that turns a person's reference photos into a photo + video set:
+ *
+ *   R1..Rn  → IG1..IG4.image     (every photo feeds every image gen)
+ *   T1..T4  → IG1..IG4.prompt
+ *   IG1..IG4 → VG1..VG4.startFrame
+ *   T5..T8  → VG1..VG4.prompt
+ *
+ * Pass `refs` as local `/generated/...` paths (what `POST /api/upload-asset`
+ * returns) or remote URLs. An empty list uses the UGC placeholder photos so the
+ * template still spawns from the dashboard.
+ */
+export function makePersonTemplate(refs: string[] = []): {
+  nodes: Node<NodeData>[];
+  edges: Edge[];
+  nodeCounters: Record<string, number>;
+} {
+  const photos = personRefs(refs);
+  const usingPlaceholders = photos.length === 0;
+  const refUrls = usingPlaceholders ? REF_IMAGES : photos;
+
+  const nodes: Node<NodeData>[] = [];
+  const edges: Edge[] = [];
+
+  // Reference photos — one stacked column on the far left, wired to every image gen.
+  refUrls.forEach((url, i) => {
+    nodes.push({
+      id: `tpl-ref-${i + 1}`,
+      type: "imageInputNode",
+      position: { x: -760, y: -300 + i * 300 },
+      style: { width: 260 },
+      data: {
+        label: usingPlaceholders ? `Reference #${i + 1}` : `Reference #${i + 1}`,
+        status: "idle",
+        r2Url: url,
+        imageNaturalRatio: "1 / 1",
+      },
+    });
+  });
+
+  for (let i = 0; i < 4; i++) {
+    const base = i * STRIDE_X;
+    const ptImgId = `tpl-pt-${i + 1}`;
+    const igId = `tpl-ig-${i + 1}`;
+    const ptVidId = `tpl-pv-${i + 1}`;
+    const vgId = `tpl-vg-${i + 1}`;
+
+    nodes.push({
+      id: ptVidId,
+      type: "promptNode",
+      position: { x: base + X_OFFSET * 2, y: -430 },
+      style: { width: 260, height: 390 },
+      data: { label: `Text #${i + 5}`, status: "idle", prompt: PERSON_VID_PROMPTS[i] },
+    });
+
+    nodes.push({
+      id: vgId,
+      type: "videoGeneratorNode",
+      position: { x: base + X_OFFSET * 2, y: 0 },
+      style: { width: 320, height: 220 },
+      data: {
+        label: `Video Generator #${i + 1}`,
+        status: "idle",
+        videoModel: "seedance-2",
+        aspectRatio: "9:16",
+        grokResolution: "1080p",
+        sound: true,
+      },
+    });
+
+    nodes.push({
+      id: igId,
+      type: "generateNode",
+      position: { x: base, y: 620 },
+      style: { width: 280, height: 280 },
+      data: {
+        label: `Image Generator #${i + 1}`,
+        status: "idle",
+        model: "nano-banana-pro",
+        aspectRatio: "9:16",
+        quality: "2k",
+      },
+    });
+
+    nodes.push({
+      id: ptImgId,
+      type: "promptNode",
+      position: { x: base, y: 1200 },
+      style: { width: 260, height: 390 },
+      data: { label: `Text #${i + 1}`, status: "idle", prompt: PERSON_IMG_PROMPTS[i] },
+    });
+
+    edges.push({
+      id: `tpl-e-pt${i + 1}-ig${i + 1}`,
+      source: ptImgId,
+      target: igId,
+      targetHandle: "prompt",
+      animated: false,
+      style: edgeStyle("prompt"),
+    });
+
+    edges.push({
+      id: `tpl-e-ig${i + 1}-vg${i + 1}`,
+      source: igId,
+      target: vgId,
+      targetHandle: "startFrame",
+      animated: false,
+      style: edgeStyle("image"),
+    });
+
+    edges.push({
+      id: `tpl-e-pv${i + 1}-vg${i + 1}`,
+      source: ptVidId,
+      target: vgId,
+      targetHandle: "prompt",
+      animated: false,
+      style: edgeStyle("prompt"),
+    });
+
+    refUrls.forEach((_, r) => {
+      edges.push({
+        id: `tpl-e-ref${r + 1}-ig${i + 1}`,
+        source: `tpl-ref-${r + 1}`,
+        target: igId,
+        targetHandle: "image",
+        animated: false,
+        style: edgeStyle("image"),
+      });
+    });
+  }
+
+  return {
+    nodes,
+    edges,
+    nodeCounters: {
+      promptNode: 8,
+      generateNode: 4,
+      videoGeneratorNode: 4,
+      imageInputNode: refUrls.length,
+    },
+  };
+}
