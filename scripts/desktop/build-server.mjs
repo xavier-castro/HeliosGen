@@ -153,7 +153,17 @@ writeFileSync(
   join(STAGE, "package.json"),
   JSON.stringify({ ...rootPkg, dependencies: pinned, devDependencies: {} }, null, 2),
 );
-run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock"], {}, STAGE);
+// SHARP_IGNORE_GLOBAL_LIBVIPS: sharp's install check prefers a system libvips
+// found via pkg-config, then falls back to a source build that needs
+// node-addon-api (which the bundled tree doesn't have). A Linux dev box with
+// libvips installed therefore fails the whole install. The staged bundle must not
+// depend on the target machine's libvips anyway, so pin the prebuilt one.
+run(
+  "npm",
+  ["install", "--omit=dev", "--no-audit", "--no-fund", "--no-package-lock"],
+  { SHARP_IGNORE_GLOBAL_LIBVIPS: "1" },
+  STAGE,
+);
 
 // Sanity check: the standalone server's own entry deps must be intact.
 for (const probe of ["next/package.json", "@next/env/package.json", "react/package.json"]) {
