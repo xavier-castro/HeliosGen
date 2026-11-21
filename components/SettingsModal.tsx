@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { IMAGE_MODELS, VIDEO_MODELS } from "@/lib/modelConfig";
 import { MODEL_GROUPS } from "@/lib/models";
 import { useWorkflowStore } from "@/lib/store";
-import { PROVIDERS, ProviderId, loadModelProviders, saveModelProviders, getModelProvider } from "@/lib/providers";
+import { PROVIDERS, ProviderId, loadModelProviders, saveModelProviders, getModelProvider, getProviderChoices } from "@/lib/providers";
 
 /* ─── Provider options (re-exported for backwards compat) ───────────────────── */
 
@@ -186,6 +186,21 @@ function ProviderBrandIcon({ id, size = 12 }: { id: ProviderId; size?: number })
       </svg>
     );
   }
+  if (id === "venice") {
+    return (
+      <svg className="shrink-0" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#A855F7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 5l9 14 9-14" />
+        <path d="M8 5h8" />
+      </svg>
+    );
+  }
+  if (id === "civitai") {
+    return (
+      <span className="text-[#2DD4BF] shrink-0" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.75)}px`, fontWeight: 700 }}>
+        C
+      </span>
+    );
+  }
   return null;
 }
 
@@ -194,10 +209,12 @@ function ProviderBrandIcon({ id, size = 12 }: { id: ProviderId; size?: number })
 function ProviderToggle({
   modelId,
   value,
+  choices,
   onChange,
 }: {
   modelId: string;
   value: ProviderId;
+  choices: ProviderId[];
   onChange: (v: ProviderId) => void;
 }) {
   return (
@@ -213,7 +230,8 @@ function ProviderToggle({
         flexShrink: 0,
       }}
     >
-      {PROVIDERS.map((p) => {
+      {choices.map((choice) => {
+        const p = PROVIDERS.find((x) => x.id === choice)!;
         const active = value === p.id;
         return (
           <button
@@ -255,7 +273,7 @@ function ModelRow({
   category,
   value,
   onChange,
-  azureSupported,
+  providerChoices,
 }: {
   id: string;
   name: string;
@@ -263,7 +281,7 @@ function ModelRow({
   category: string;
   value: ProviderId;
   onChange: (v: ProviderId) => void;
-  azureSupported: boolean;
+  providerChoices: ProviderId[];
 }) {
   return (
     <div
@@ -304,7 +322,9 @@ function ModelRow({
       </div>
 
       {/* Provider toggle — only shown for models with more than one backend to choose from */}
-      {azureSupported && <ProviderToggle modelId={id} value={value} onChange={onChange} />}
+      {providerChoices.length > 1 && (
+        <ProviderToggle modelId={id} value={value} choices={providerChoices} onChange={onChange} />
+      )}
     </div>
   );
 }
@@ -322,7 +342,7 @@ function ModelGroup({
 }: {
   title: string;
   accent: string;
-  models: { id: string; name: string; provider: string; category: string; hasAzureDeployment?: boolean }[];
+  models: { id: string; name: string; provider: string; category: string; hasAzureDeployment?: boolean; providerChoices: ProviderId[] }[];
   providers: Record<string, ProviderId>;
   onProviderChange: (modelId: string, v: ProviderId) => void;
   azureDeployments: Record<string, string>;
@@ -349,7 +369,7 @@ function ModelGroup({
               category={m.category}
               value={providers[m.id] ?? "kie"}
               onChange={(v) => onProviderChange(m.id, v)}
-              azureSupported={!!m.hasAzureDeployment}
+              providerChoices={m.providerChoices}
             />
             {/* Deployment name — shown only for Azure-capable models when Azure is selected */}
             {m.hasAzureDeployment && (providers[m.id] ?? "kie") === "azure" && (
@@ -402,6 +422,140 @@ function ModelGroup({
   );
 }
 
+/* ─── Simple single-key card (Venice / CivitAI) ─────────────────────────────── */
+
+function SimpleKeyCard({
+  id,
+  title,
+  hint,
+  placeholder,
+  accent,
+  status,
+  onSave,
+  onDelete,
+}: {
+  id: string;
+  title: string;
+  hint: string;
+  placeholder: string;
+  accent: string;
+  status: "unknown" | "set" | "unset";
+  onSave: (key: string) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [input, setInput]   = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!input.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(input.trim());
+      setInput("");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async () => {
+    try { await onDelete(); } catch { /* noop */ }
+  };
+
+  return (
+    <div
+      style={{
+        display: "flex", flexDirection: "column", gap: "10px", padding: "16px",
+        background: "rgba(255,255,255,0.02)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: "12px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <span
+          style={{
+            width: "28px", height: "28px", borderRadius: "7px",
+            background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <ProviderBrandIcon id={id as ProviderId} size={16} />
+        </span>
+        <div>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{title}</div>
+          <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.28)", marginTop: "1px" }}>{hint}</div>
+        </div>
+        {status === "set" && (
+          <span
+            style={{
+              marginLeft: "auto", fontSize: "10px", fontWeight: 600,
+              color: "rgba(74,222,128,0.8)", background: "rgba(74,222,128,0.08)",
+              border: "1px solid rgba(74,222,128,0.2)", borderRadius: "5px",
+              padding: "2px 7px", letterSpacing: "0.04em",
+            }}
+          >
+            SAVED
+          </span>
+        )}
+      </div>
+
+      {status === "set" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span
+            style={{
+              flex: 1, fontSize: "12px", color: "rgba(255,255,255,0.4)",
+              fontFamily: "ui-monospace, monospace", letterSpacing: "0.1em",
+            }}
+          >
+            ••••••••••••••••••••
+          </span>
+          <button
+            onClick={handleDelete}
+            style={{
+              padding: "6px 12px", borderRadius: "7px", fontSize: "11px", fontWeight: 500,
+              background: "rgba(239,68,68,0.08)", border: `1px solid ${accent}`,
+              color: "rgba(255,255,255,0.6)", cursor: "pointer",
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: "8px" }}>
+          <input
+            id={`key-input-${id}`}
+            type="password"
+            placeholder={placeholder}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+            style={INPUT_STYLE}
+            onFocus={(e) => { (e.target as HTMLInputElement).style.borderColor = accent; }}
+            onBlur={(e)  => { (e.target as HTMLInputElement).style.borderColor = "rgba(255,255,255,0.08)"; }}
+          />
+          <button
+            onClick={handleSave}
+            disabled={saving || !input.trim()}
+            style={{
+              padding: "7px 14px", borderRadius: "7px", fontSize: "11px", fontWeight: 600,
+              background: "rgba(255,255,255,0.06)", border: `1px solid ${accent}`,
+              color: "rgba(255,255,255,0.75)",
+              cursor: saving || !input.trim() ? "default" : "pointer",
+              opacity: saving || !input.trim() ? 0.5 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
+      {error && <p style={{ fontSize: "11px", color: "rgba(239,68,68,0.7)", margin: 0 }}>{error}</p>}
+    </div>
+  );
+}
+
 /* ─── API Keys panel ─────────────────────────────────────────────────────────── */
 
 const INPUT_STYLE: React.CSSProperties = {
@@ -425,6 +579,12 @@ function ApiKeysPanel({
   azureKeyStatus,
   onAzureKeySave,
   onAzureKeyDelete,
+  veniceKeyStatus,
+  onVeniceKeySave,
+  onVeniceKeyDelete,
+  civitaiKeyStatus,
+  onCivitaiKeySave,
+  onCivitaiKeyDelete,
   codexStatus,
   onCodexLoginSuccess,
 }: {
@@ -436,6 +596,12 @@ function ApiKeysPanel({
   azureKeyStatus: "unknown" | "set" | "unset";
   onAzureKeySave: (key: string) => Promise<void>;
   onAzureKeyDelete: () => Promise<void>;
+  veniceKeyStatus: "unknown" | "set" | "unset";
+  onVeniceKeySave: (key: string) => Promise<void>;
+  onVeniceKeyDelete: () => Promise<void>;
+  civitaiKeyStatus: "unknown" | "set" | "unset";
+  onCivitaiKeySave: (key: string) => Promise<void>;
+  onCivitaiKeyDelete: () => Promise<void>;
   codexStatus: CodexStatus;
   onCodexLoginSuccess: () => void;
 }) {
@@ -445,6 +611,12 @@ function ApiKeysPanel({
   const [azureInput, setAzureInput]   = useState("");
   const [azureSaving, setAzureSaving] = useState(false);
   const [azureError, setAzureError]   = useState<string | null>(null);
+  const [veniceInput, setVeniceInput]     = useState("");
+  const [veniceSaving, setVeniceSaving] = useState(false);
+  const [veniceError, setVeniceError]     = useState<string | null>(null);
+  const [civitaiInput, setCivitaiInput]     = useState("");
+  const [civitaiSaving, setCivitaiSaving] = useState(false);
+  const [civitaiError, setCivitaiError]     = useState<string | null>(null);
 
   type CodexLoginFlow =
     | { status: "idle" }
@@ -797,6 +969,30 @@ function ApiKeysPanel({
         </div>
       </div>
 
+      {/* ──── Venice AI API key ─────────────────────────────────────────── */}
+      <SimpleKeyCard
+        id="venice"
+        title="Venice AI"
+        hint="Hosted uncensored image models (Krea 2 Turbo, Lustify, Chroma, WAI)"
+        placeholder="Paste your Venice API key"
+        accent="rgba(168,85,247,0.4)"
+        status={veniceKeyStatus}
+        onSave={onVeniceKeySave}
+        onDelete={onVeniceKeyDelete}
+      />
+
+      {/* ──── CivitAI API token ───────────────────────────────────────── */}
+      <SimpleKeyCard
+        id="civitai"
+        title="CivitAI"
+        hint="Runs community checkpoints (FinePorn, WAI) on Civitai workers — paid in Buzz"
+        placeholder="Paste your CivitAI API token"
+        accent="rgba(45,212,191,0.4)"
+        status={civitaiKeyStatus}
+        onSave={onCivitaiKeySave}
+        onDelete={onCivitaiKeyDelete}
+      />
+
       {/* ──── Codex CLI status ─────────────────────────────────────────── */}
       <div
         style={{
@@ -985,6 +1181,7 @@ function ImageModelsPanel({
     provider: m.provider,
     category: "Image",
     hasAzureDeployment: !!m.azureSizeMap,
+    providerChoices: getProviderChoices(m.id),
   }));
 
   return (
@@ -1030,6 +1227,7 @@ function VideoModelsPanel({
     provider: m.provider,
     category: "Video",
     hasAzureDeployment: false,
+    providerChoices: [] as ProviderId[],
   }));
 
   return (
@@ -1342,6 +1540,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [azureTextModelName, setAzureTextModelName]   = useState("model-router");
   const [kieKeyStatus, setKieKeyStatus]               = useState<"unknown" | "set" | "unset">("unknown");
   const [azureKeyStatus, setAzureKeyStatus]   = useState<"unknown" | "set" | "unset">("unknown");
+  const [veniceKeyStatus, setVeniceKeyStatus] = useState<"unknown" | "set" | "unset">("unknown");
+  const [civitaiKeyStatus, setCivitaiKeyStatus] = useState<"unknown" | "set" | "unset">("unknown");
   const [codexStatus, setCodexStatus]         = useState<CodexStatus>({ kind: "unknown" });
   const setKieKeySet    = useWorkflowStore((s) => s.setKieKeySet);
   const setAzureKeySet  = useWorkflowStore((s) => s.setAzureKeySet);
@@ -1380,6 +1580,20 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         .then((r) => r.json())
         .then((d) => setAzureKeyStatus(d.hasToken ? "set" : "unset"))
         .catch(() => setAzureKeyStatus("unset"))
+    );
+    // Check if Venice key is saved on the server
+    authHeader().then((h) =>
+      fetch("/api/settings/venice-key", { headers: h })
+        .then((r) => r.json())
+        .then((d) => setVeniceKeyStatus(d.hasToken ? "set" : "unset"))
+        .catch(() => setVeniceKeyStatus("unset"))
+    );
+    // Check if CivitAI token is saved on the server
+    authHeader().then((h) =>
+      fetch("/api/settings/civitai-key", { headers: h })
+        .then((r) => r.json())
+        .then((d) => setCivitaiKeyStatus(d.hasToken ? "set" : "unset"))
+        .catch(() => setCivitaiKeyStatus("unset"))
     );
     // Check whether the server has a working codex-imagegen + codex login
     refreshCodexStatus();
@@ -1452,6 +1666,40 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     await fetch("/api/settings/azure-key", { method: "DELETE", headers: h });
     setAzureKeyStatus("unset");
     setAzureKeySet(false);
+  };
+
+  const handleVeniceKeySave = async (key: string) => {
+    const h = await authHeader();
+    const res = await fetch("/api/settings/venice-key", {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({ veniceApiKey: key }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+    setVeniceKeyStatus("set");
+  };
+
+  const handleVeniceKeyDelete = async () => {
+    const h = await authHeader();
+    await fetch("/api/settings/venice-key", { method: "DELETE", headers: h });
+    setVeniceKeyStatus("unset");
+  };
+
+  const handleCivitaiKeySave = async (key: string) => {
+    const h = await authHeader();
+    const res = await fetch("/api/settings/civitai-key", {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({ civitaiApiKey: key }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
+    setCivitaiKeyStatus("set");
+  };
+
+  const handleCivitaiKeyDelete = async () => {
+    const h = await authHeader();
+    await fetch("/api/settings/civitai-key", { method: "DELETE", headers: h });
+    setCivitaiKeyStatus("unset");
   };
 
   const handleAzureTextDeploymentChange = (v: string) => {
@@ -1657,6 +1905,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 azureKeyStatus={azureKeyStatus}
                 onAzureKeySave={handleAzureKeySave}
                 onAzureKeyDelete={handleAzureKeyDelete}
+                veniceKeyStatus={veniceKeyStatus}
+                onVeniceKeySave={handleVeniceKeySave}
+                onVeniceKeyDelete={handleVeniceKeyDelete}
+                civitaiKeyStatus={civitaiKeyStatus}
+                onCivitaiKeySave={handleCivitaiKeySave}
+                onCivitaiKeyDelete={handleCivitaiKeyDelete}
                 codexStatus={codexStatus}
                 onCodexLoginSuccess={refreshCodexStatus}
               />

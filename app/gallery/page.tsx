@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } fr
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { IMAGE_MODELS, VIDEO_MODELS, AZURE_POPULAR_SIZES, validateAzureCustomSize } from "@/lib/modelConfig";
-import { PROVIDERS, getModelProvider, setModelProvider, modelHasProviderChoice } from "@/lib/providers";
+import { PROVIDERS, getModelProvider, setModelProvider, modelHasProviderChoice, getProviderChoices } from "@/lib/providers";
 import { useWorkflowStore } from "@/lib/store";
 import { Maximize2, Minimize2, ShieldAlert, X } from "lucide-react";
 
@@ -1641,6 +1641,7 @@ function GalleryInner() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           prompt: resolvedPrompt, model: modelId, aspectRatio, quality, imageUrls,
+          provider: providerForModel,
           ...(isAzure ? {
             azureBaseUrl, azureDeployment, azureQuality: quality, azureResolution,
             ...(aspectRatio === "custom" ? { azureCustomWidth, azureCustomHeight } : {}),
@@ -1857,7 +1858,7 @@ function GalleryInner() {
       console.log("[Gallery Debug] Generate request:", {
         type: isVideo ? "video" : "image",
         prompt: dbgPrompt, model: modelId, aspectRatio, quality,
-        provider: dbgIsAzure ? "azure" : "kie",
+        provider: dbgProvider,
         ...(dbgIsAzure ? {
           azureBaseUrl: dbgAzureBaseUrl, azureDeployment: dbgAzureDeployment, azureQuality: quality, azureResolution,
           ...(aspectRatio === "custom" ? { azureCustomWidth, azureCustomHeight } : {}),
@@ -2905,7 +2906,7 @@ function GalleryInner() {
                                     const providerForModel = (() => { try { return JSON.parse(localStorage.getItem("aiui-model-providers") ?? "{}")[modelId] ?? "kie"; } catch { return "kie"; } })();
                                     const isAzure = !!(azureBaseUrl && azureDeployment && providerForModel === "azure");
                                     const isCodex = providerForModel === "codex";
-                                    const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ prompt: resolvedPrompt, model: modelId, aspectRatio: pg.aspectRatio, quality, imageUrls, ...(isAzure ? { azureBaseUrl, azureDeployment, azureQuality: quality } : {}), ...(isCodex ? { codexProvider: true } : {}) }) });
+                                    const res = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ prompt: resolvedPrompt, model: modelId, aspectRatio: pg.aspectRatio, quality, imageUrls, provider: providerForModel, ...(isAzure ? { azureBaseUrl, azureDeployment, azureQuality: quality } : {}), ...(isCodex ? { codexProvider: true } : {}) }) });
                                     const d = await res.json() as { taskId?: string; error?: string };
                                     if (!res.ok) throw new Error(d.error ?? "Failed");
                                     taskId = d.taskId!;
@@ -4054,7 +4055,7 @@ function GalleryInner() {
                     value={providerId}
                     onChange={(v) => setModelProvider(modelId, v as (typeof PROVIDERS)[number]["id"])}
                     disabled={submitting}
-                    options={PROVIDERS.map(p => ({ value: p.id, label: p.label, providerIcon: <ProviderBackendIcon id={p.id} /> }))}
+                    options={PROVIDERS.filter(p => getProviderChoices(modelId).includes(p.id)).map(p => ({ value: p.id, label: p.label, providerIcon: <ProviderBackendIcon id={p.id} /> }))}
                     showChevron
                   />
                 )}
@@ -5607,6 +5608,21 @@ function ProviderBackendIcon({ id }: { id: (typeof PROVIDERS)[number]["id"] }) {
       <svg width="14" height="14" viewBox="0 0 256 199">
         <path d="M118.432 187.698c32.89-5.81 60.055-10.618 60.367-10.684l.568-.12l-31.052-36.935c-17.078-20.314-31.051-37.014-31.051-37.11c0-.182 32.063-88.477 32.243-88.792c.06-.105 21.88 37.567 52.893 91.32c29.035 50.323 52.973 91.815 53.195 92.203l.405.707l-98.684-.012l-98.684-.013l59.8-10.564zM0 176.435c0-.052 14.631-25.451 32.514-56.442l32.514-56.347l37.891-31.799C123.76 14.358 140.867.027 140.935.001c.069-.026-.205.664-.609 1.534s-18.919 40.582-41.145 88.25l-40.41 86.67l-29.386.037c-16.162.02-29.385-.005-29.385-.057z" fill="#0089D6" fillRule="nonzero" />
       </svg>
+    );
+  }
+  if (id === "venice") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A855F7" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 5l9 14 9-14" />
+        <path d="M8 5h8" />
+      </svg>
+    );
+  }
+  if (id === "civitai") {
+    return (
+      <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px", fontSize: "11px", fontWeight: 700 }}>
+        C
+      </span>
     );
   }
   return null;

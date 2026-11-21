@@ -10,9 +10,11 @@ import { jobStore } from "@/lib/jobStore";
 import { pollKieJob } from "@/lib/kieJobPoller";
 import { ensureKieReachableImages } from "@/lib/kieUpload";
 import { ensureR2, uploadBuffer } from "@/lib/storage";
-import { IMAGE_MODELS, validateAzureCustomSize } from "@/lib/modelConfig";
+import { IMAGE_MODELS, validateAzureCustomSize, venicePixelSize } from "@/lib/modelConfig";
 import { getKieTokenForUser } from "@/lib/getKieToken";
 import { getAzureKeyForUser } from "@/lib/getAzureKey";
+import { getVeniceKeyForUser } from "@/lib/getVeniceKey";
+import { getCivitaiKeyForUser } from "@/lib/getCivitaiKey";
 import { GUEST_USER_ID } from "@/lib/guestMode";
 import * as guestDb from "@/lib/guest/db";
 
@@ -191,6 +193,53 @@ const CODEX_SIZE_MAP: Record<string, string> = {
   "3:4":  "1024x1536",
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Clamp an app quality tier to the nearest Venice resolution this model offers. */
+function veniceResolution(quality: string, allowed?: string[]): string {
+  const wanted = quality === "4k" ? "4K" : quality === "2k" ? "2K" : "1K";
+  if (!allowed?.length) return wanted;
+  if (allowed.includes(wanted)) return wanted;
+  return allowed[allowed.length - 1];
+}
+
+/** Pull the most useful message out of a Venice/CivitAI error body. */
+function apiError(status: number, raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: string | { message?: string };
+      message?: string;
+      detail?: string;
+      title?: string;
+    };
+    const detail = typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+    const msg = detail ?? parsed.detail ?? parsed.message ?? parsed.title;
+    if (msg) return msg;
+  } catch { /* not JSON */ }
+  return `HTTP ${status}`;
+}
+
+/** Resolve a CivitAI blob to a Buffer, following redirects. */
+function fetchBlob(url: string, maxRedirects = 5): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) return reject(new Error("Too many redirects"));
+    const u = new URL(url);
+    const mod = u.protocol === "https:" ? https : (http as unknown as typeof https);
+    mod.get(url, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchBlob(res.headers.location, maxRedirects - 1).then(resolve).catch(reject);
+      }
+      if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+        return reject(new Error(`HTTP ${res.statusCode} fetching CivitAI result`));
+      }
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+      res.on("error", reject);
+    }).on("error", reject);
+  });
+}
+
 /**
  * codex-imagegen's stderr wraps the underlying failure as `codex-imagegen exited
  * with code N: <tmp path> Error: <detail>`, where <detail> is either a JSON blob
@@ -285,6 +334,7 @@ export async function POST(req: NextRequest) {
     azureCustomWidth,
     azureCustomHeight,
     codexProvider,
+    provider,
     debugOnly,
   } = (await req.json()) as {
     model?:              string;
@@ -299,6 +349,7 @@ export async function POST(req: NextRequest) {
     azureCustomWidth?:   number;     // manual size — used when aspectRatio === "custom"
     azureCustomHeight?:  number;
     codexProvider?:      boolean;    // route through the server's local codex-imagegen CLI
+    provider?:           string;     // explicit backend: kie | azure | codex | venice | civitai
     debugOnly?:          boolean;
   };
 
@@ -313,6 +364,11 @@ export async function POST(req: NextRequest) {
   const cfg = IMAGE_MODELS.find((m) => m.id === model);
   if (!cfg) return NextResponse.json({ error: `Unknown model: ${model}` }, { status: 400 });
 
+  // The backend to use: an explicit client choice wins; a model with exactly one
+  // declared backend always routes there; everything else is Kie.ai.
+  const requestedProvider =
+    provider ?? (cfg.providerChoices?.length === 1 ? cfg.providerChoices[0] : undefined);
+
   let r2ImageUrls: string[] = [];
   try {
     r2ImageUrls = await resolveImages(imageUrls);
@@ -321,6 +377,198 @@ export async function POST(req: NextRequest) {
   }
 
   const currentUserId = GUEST_USER_ID;
+
+  // ── Venice AI branch ──────────────────────────────────────────────────────────
+  if (requestedProvider === "venice") {
+    const vcfg = cfg.venice;
+    if (!vcfg) return NextResponse.json({ error: `${model} has no Venice backend` }, { status: 400 });
+
+    const veniceKey = (await getVeniceKeyForUser()) ?? process.env.VENICE_API_KEY ?? null;
+    if (!veniceKey) return NextResponse.json({ error: "Venice API key is not configured. Add it in Settings." }, { status: 500 });
+
+    const veniceTaskId = `venice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    jobStore.set(veniceTaskId, { status: "pending", type: "image", userId: currentUserId ?? undefined });
+
+    const veniceUserId = currentUserId;
+
+    (async () => {
+      try {
+        const body: Record<string, unknown> = {
+          model:  vcfg.apiId,
+          prompt: prompt.slice(0, vcfg.promptMaxLength ?? cfg.apiInput.promptMaxLength),
+          format: "png",
+          variants: 1,
+          hide_watermark: true,
+        };
+        if (vcfg.safeMode === false) body.safe_mode = false;
+        if (vcfg.negativePrompt) body.negative_prompt = vcfg.negativePrompt;
+        if (vcfg.steps != null) body.steps = vcfg.steps;
+        if (vcfg.cfgScale != null) body.cfg_scale = vcfg.cfgScale;
+
+        if (vcfg.sizing === "resolution") {
+          const ratio = aspectRatio === "auto" ? "1:1" : aspectRatio;
+          if (ratio !== "custom") body.aspect_ratio = ratio;
+          body.resolution = veniceResolution(quality, vcfg.resolutions);
+        } else {
+          const [w, h] = venicePixelSize(aspectRatio, quality).split("x").map(Number);
+          body.width = w;
+          body.height = h;
+        }
+
+        // Venice has no true img2img on /image/generate — only style references.
+        const styleRefs = vcfg.supportsStyleRefs ? r2ImageUrls.slice(0, vcfg.maxStyleRefs ?? 4) : [];
+        if (styleRefs.length > 0) {
+          body.style_references = styleRefs.map((image) => ({ image, strength: 0.5 }));
+        }
+
+        console.log("[venice] request →", JSON.stringify(body, null, 2));
+
+        const res = await httpsPost(
+          "https://api.venice.ai/api/v1/image/generate",
+          { "Content-Type": "application/json", Authorization: `Bearer ${veniceKey}` },
+          JSON.stringify(body),
+        );
+        const txt = await res.text();
+        if (!res.ok) {
+          jobStore.set(veniceTaskId, { status: "error", error: apiError(res.status, txt) });
+          return;
+        }
+
+        const b64 = (JSON.parse(txt) as { images?: string[] })?.images?.[0];
+        if (!b64) {
+          jobStore.set(veniceTaskId, { status: "error", error: "Venice returned no image data" });
+          return;
+        }
+
+        const buf      = Buffer.from(b64, "base64");
+        const imageUrl = await uploadBuffer(buf, "image/png", "generated");
+        jobStore.set(veniceTaskId, { status: "done", imageUrl });
+
+        guestDb.insertGeneration({
+          task_id: veniceTaskId, user_id: veniceUserId, generation_type: "image",
+          status: "done", image_url: imageUrl, prompt: prompt.slice(0, 2000),
+          model, aspect_ratio: aspectRatio, quality,
+          reference_image_urls: styleRefs.length > 0 ? styleRefs : undefined,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[venice] background error:", msg, e);
+        jobStore.set(veniceTaskId, { status: "error", error: msg });
+      }
+    })();
+
+    return NextResponse.json({ taskId: veniceTaskId });
+  }
+
+  // ── CivitAI Orchestration branch ───────────────────────────────────────────────
+  // Runs a community checkpoint (NSFW merges included) on Civitai's own workers via
+  // the public Orchestration API, paid in Buzz. Mature output forces yellow Buzz.
+  if (requestedProvider === "civitai") {
+    const ccfg = cfg.civitai;
+    if (!ccfg) return NextResponse.json({ error: `${model} has no CivitAI backend` }, { status: 400 });
+
+    const civitaiKey = (await getCivitaiKeyForUser()) ?? process.env.CIVITAI_API_KEY ?? null;
+    if (!civitaiKey) return NextResponse.json({ error: "CivitAI API token is not configured. Add it in Settings." }, { status: 401 });
+
+    const civitaiTaskId = `civitai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    jobStore.set(civitaiTaskId, { status: "pending", type: "image", userId: currentUserId ?? undefined });
+
+    const civitaiUserId = currentUserId;
+
+    (async () => {
+      try {
+        const size = ccfg.pixelSizes?.[aspectRatio] ?? `${ccfg.width}x${ccfg.height}`;
+        const [width, height] = size.split("x").map(Number);
+
+        const input: Record<string, unknown> = {
+          engine:    ccfg.engine,
+          ecosystem: ccfg.ecosystem,
+          operation: "createImage",
+          prompt:    prompt.slice(0, ccfg.promptMaxLength ?? cfg.apiInput.promptMaxLength),
+          width,
+          height,
+          quantity:  1,
+        };
+
+        if (ccfg.engine === "comfy") {
+          if (ccfg.model) input.model = ccfg.model;
+          input.diffusionModel = ccfg.air;
+          if (ccfg.sampler) input.sampler = ccfg.sampler;
+          if (ccfg.scheduler) input.scheduler = ccfg.scheduler;
+        } else {
+          input.model = ccfg.air;
+          if (ccfg.sampleMethod) input.sampleMethod = ccfg.sampleMethod;
+          if (ccfg.schedule) input.schedule = ccfg.schedule;
+        }
+        if (ccfg.steps != null) input.steps = ccfg.steps;
+        if (ccfg.cfgScale != null) input.cfgScale = ccfg.cfgScale;
+        if (ccfg.negativePrompt) input.negativePrompt = ccfg.negativePrompt;
+
+        console.log("[civitai] request →", JSON.stringify({ steps: [{ $type: "imageGen", input }] }, null, 2));
+
+        const headers = { "Content-Type": "application/json", Authorization: `Bearer ${civitaiKey}` };
+        const submit = await fetch(
+          "https://orchestration.civitai.com/v2/consumer/workflows?wait=60",
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              steps: [{ $type: "imageGen", input }],
+              allowMatureContent: true,
+              currencies: ["yellow"],
+              tags: ["heliosgen"],
+            }),
+          },
+        );
+
+        let txt = await submit.text();
+        if (!submit.ok) throw new Error(apiError(submit.status, txt));
+
+        let workflow = JSON.parse(txt) as {
+          id?: string;
+          status?: string;
+          steps?: Array<{ output?: { images?: Array<{ url?: string }> } }>;
+        };
+        const workflowId = workflow.id;
+        if (!workflowId) throw new Error("CivitAI returned no workflow id");
+
+        const deadline = Date.now() + 12 * 60 * 1000;
+        while (workflow.status !== "succeeded" && Date.now() < deadline) {
+          if (workflow.status && ["failed", "expired", "canceled"].includes(workflow.status)) {
+            throw new Error(`CivitAI workflow ${workflow.status}`);
+          }
+          await sleep(3_000);
+          const poll = await fetch(
+            `https://orchestration.civitai.com/v2/consumer/workflows/${encodeURIComponent(workflowId)}?wait=60`,
+            { headers },
+          );
+          txt = await poll.text();
+          if (!poll.ok) throw new Error(apiError(poll.status, txt));
+          workflow = JSON.parse(txt) as typeof workflow;
+        }
+        if (workflow.status !== "succeeded") throw new Error("CivitAI generation timed out");
+
+        const blobUrl = workflow.steps?.[0]?.output?.images?.[0]?.url;
+        if (!blobUrl) throw new Error("CivitAI returned no image");
+
+        const buf      = await fetchBlob(blobUrl);
+        const imageUrl = await uploadBuffer(buf, "image/jpeg", "generated");
+        jobStore.set(civitaiTaskId, { status: "done", imageUrl });
+
+        guestDb.insertGeneration({
+          task_id: civitaiTaskId, user_id: civitaiUserId, generation_type: "image",
+          status: "done", image_url: imageUrl, prompt: prompt.slice(0, 2000),
+          model, aspect_ratio: aspectRatio, quality,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[civitai] background error:", msg, e);
+        jobStore.set(civitaiTaskId, { status: "error", error: msg });
+      }
+    })();
+
+    return NextResponse.json({ taskId: civitaiTaskId });
+  }
 
   // ── Azure Foundry branch ──────────────────────────────────────────────────────
   if (azureBaseUrl && azureDeployment) {

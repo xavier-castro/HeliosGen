@@ -41,12 +41,15 @@ export function pollKieJob(taskId: string, apiKey: string, kind: Kind): void {
     .finally(() => active.delete(taskId));
 }
 
-// Local-only providers mint prefixed task IDs (`azure-…`, `codex-…`) and have no
-// kie.ai job behind them. Polling kie.ai's recordInfo for one of these just
-// comes back `{ msg: "recordInfo is null" }`, which the loop then settles as a
-// spurious error — clobbering the real job that's still running locally.
+// Local-only providers mint prefixed task IDs (`azure-…`, `codex-…`, `venice-…`,
+// `civitai-…`) and have no kie.ai job behind them. Polling kie.ai's recordInfo
+// for one of these just comes back `{ msg: "recordInfo is null" }`, which the loop
+// then settles as a spurious error — clobbering the real job that's still running
+// locally.
+const LOCAL_TASK_PREFIXES = ["azure-", "codex-", "venice-", "civitai-"];
+
 function isKieTaskId(taskId: string): boolean {
-  return !taskId.startsWith("azure-") && !taskId.startsWith("codex-");
+  return !LOCAL_TASK_PREFIXES.some((p) => taskId.startsWith(p));
 }
 
 /**

@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import { useWorkflowStore, NodeData } from "@/lib/store";
 import { requestWorkflowSync } from "@/lib/workflowSyncBus";
 import { VIDEO_MODELS } from "@/lib/modelConfig";
+import { getModelProvider } from "@/lib/providers";
 import CuttableEdge from "@/components/edges/CuttableEdge";
 import { topoSort, resolveInputs } from "@/lib/executor";
 import { NODE_SIZE, FALLBACK_SIZE, getLastNodeSettings, getDefaultNodeSize } from "@/lib/nodeTypes";
@@ -1200,7 +1201,7 @@ export default function WorkflowCanvas() {
         const imageUrls = upstream.imageUrls;
         const aspectRatio = node.data.aspectRatio ?? "1:1";
         const quality = node.data.quality ?? "1k";
-        const payload = { prompt, imageUrls, model: node.data.model, aspectRatio, quality };
+        const payload = { prompt, imageUrls, model: node.data.model, aspectRatio, quality, provider: getModelProvider(node.data.model as string) };
 
         if (!prompt?.trim()) {
           const promptNodeId = edges.find(

@@ -91,6 +91,104 @@ export interface ImageModel {
    * a later preview version such as "2025-04-01-preview".
    */
   azureApiVersion?: string;
+  /**
+   * Backends this model may be routed to, in menu order. Omit for Kie.ai-only
+   * models. A single entry means the model always routes there (no provider
+   * toggle); two or more show a picker. See `lib/providers.ts`.
+   */
+  providerChoices?: string[];
+  /** Venice AI routing. Requires `"venice"` in `providerChoices`. */
+  venice?: VeniceRouting;
+  /** CivitAI Orchestration routing. Requires `"civitai"` in `providerChoices`. */
+  civitai?: CivitaiRouting;
+}
+
+/**
+ * How to reach this model on Venice's `/image/generate`.
+ * Venice hosts a fixed catalogue — no custom checkpoints or LoRA files.
+ */
+export interface VeniceRouting {
+  /** Venice model id, e.g. "krea-2-turbo". */
+  apiId: string;
+  /**
+   * "resolution" sends `aspect_ratio` + `resolution` (Krea/Qwen/Seedream tiers);
+   * "pixels" sends `width` + `height` (SDXL-class models, sized from
+   * `VENICE_PIXEL_SIZES`).
+   */
+  sizing: "resolution" | "pixels";
+  /** Resolution tiers to offer, e.g. ["1K", "2K"]. */
+  resolutions?: string[];
+  /** Prompt length cap for this Venice model. */
+  promptMaxLength?: number;
+  /** Fixed sampler step count (Venice exposes no step picker). */
+  steps?: number;
+  /** Fixed CFG scale. */
+  cfgScale?: number;
+  /** Default negative prompt, prepended to any model-level one. */
+  negativePrompt?: string;
+  /** Uncensored models want `safe_mode: false`. */
+  safeMode?: boolean;
+  /** Venice style references accept a URL list but no true img2img. */
+  supportsStyleRefs?: boolean;
+  maxStyleRefs?: number;
+}
+
+/**
+ * How to reach a CivitAI community checkpoint through the CivitAI
+ * Orchestration API, which runs it on Civitai's own workers.
+ */
+export interface CivitaiRouting {
+  /** AIR URN, e.g. `urn:air:krea2:diffusionmodel:civitai:2762538@3467058`. */
+  air: string;
+  /** "comfy" for Krea 2 / Flux 2 families, "sdcpp" for SDXL / SD1.5. */
+  engine: "comfy" | "sdcpp";
+  /** Engine ecosystem discriminator, e.g. "krea2", "sdxl". */
+  ecosystem: string;
+  /** Engine variant discriminator ("turbo" / "raw" / "edit") where required. */
+  model?: string;
+  /** Default output size; per-ratio overrides go in `pixelSizes`. */
+  width: number;
+  height: number;
+  pixelSizes?: Record<string, string>;
+  steps?: number;
+  cfgScale?: number;
+  /** comfy engine only. */
+  sampler?: string;
+  /** comfy engine only. */
+  scheduler?: string;
+  /** sdcpp engine only. */
+  sampleMethod?: string;
+  /** sdcpp engine only. */
+  schedule?: string;
+  negativePrompt?: string;
+  promptMaxLength?: number;
+}
+
+/**
+ * Standard SDXL buckets used by Venice's pixel-sized models (Lustify, WAI,
+ * Chroma). Venice rejects off-bucket sizes on a /8 divisor, so keep these exact.
+ */
+export const VENICE_PIXEL_SIZES: Record<string, string> = {
+  "1:1":  "1024x1024",
+  "5:4":  "1152x912",
+  "4:3":  "1152x896",
+  "3:2":  "1216x832",
+  "16:9": "1344x768",
+  "21:9": "1536x640",
+  "4:5":  "912x1152",
+  "3:4":  "896x1152",
+  "2:3":  "832x1216",
+  "9:16": "768x1344",
+  "9:21": "640x1536",
+};
+
+/** Scales a 1K Venice pixel size to a requested quality tier. */
+export function venicePixelSize(aspectRatio: string, quality: string): string {
+  const base = VENICE_PIXEL_SIZES[aspectRatio] ?? VENICE_PIXEL_SIZES["1:1"];
+  const scale = quality === "4k" ? 1.5 : quality === "2k" ? 1.5 : 1;
+  const [w, h] = base.split("x").map(Number);
+  const round8 = (n: number) => Math.max(64, Math.round((n * scale) / 8) * 8);
+  return `${round8(w)}x${round8(h)}`;
 }
 
 /**
@@ -148,6 +246,13 @@ export const IMAGE_MODELS: ImageModel[] = [
     apiId: "nano-banana-2",
     name: "Nano Banana 2",
     provider: "Google",
+    providerChoices: ["kie", "venice"],
+    venice: {
+      apiId: "nano-banana-2",
+      sizing: "resolution",
+      resolutions: ["1K", "2K", "4K"],
+      promptMaxLength: 32768,
+    },
     ratios: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3", "3:2", "21:9"],
     supportsImages: true,
     maxImages: 14,
@@ -167,6 +272,13 @@ export const IMAGE_MODELS: ImageModel[] = [
     apiId: "nano-banana-pro",
     name: "Nano Banana Pro",
     provider: "Google",
+    providerChoices: ["kie", "venice"],
+    venice: {
+      apiId: "nano-banana-pro",
+      sizing: "resolution",
+      resolutions: ["1K", "2K", "4K"],
+      promptMaxLength: 32768,
+    },
     ratios: ["1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "2:3", "3:2", "21:9"],
     supportsImages: true,
     maxImages: 8,
@@ -238,6 +350,13 @@ export const IMAGE_MODELS: ImageModel[] = [
     textOnlyApiId: "seedream/5-pro-text-to-image",
     name: "Seedream 5.0 Pro",
     provider: "Seedream",
+    providerChoices: ["kie", "venice"],
+    venice: {
+      apiId: "seedream-v5-pro",
+      sizing: "resolution",
+      resolutions: ["1K", "2K"],
+      promptMaxLength: 10000,
+    },
     ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2"],
     supportsImages: true,
     maxImages: 10,
@@ -261,6 +380,13 @@ export const IMAGE_MODELS: ImageModel[] = [
     textOnlyApiId: "grok-imagine/text-to-image",
     name: "Grok Imagine",
     provider: "X",
+    providerChoices: ["kie", "venice"],
+    venice: {
+      apiId: "grok-imagine-image",
+      sizing: "resolution",
+      resolutions: ["1K", "2K"],
+      promptMaxLength: 7500,
+    },
     ratios: ["1:1", "16:9", "9:16", "2:3", "3:2"],
     supportsImages: true,
     maxImages: 5,
@@ -282,6 +408,13 @@ export const IMAGE_MODELS: ImageModel[] = [
     textOnlyApiId: "gpt-image-2-text-to-image",
     name: "GPT Image 2",
     provider: "OpenAI",
+    providerChoices: ["kie", "azure", "codex", "venice"],
+    venice: {
+      apiId: "gpt-image-2",
+      sizing: "resolution",
+      resolutions: ["1K", "2K", "4K"],
+      promptMaxLength: 10000,
+    },
     // Kie supports: auto, 1:1, 9:16, 16:9, 4:3, 3:4
     ratios: ["auto", "1:1", "16:9", "9:16", "4:3", "3:4"],
     supportsImages: true,
@@ -379,6 +512,245 @@ export const IMAGE_MODELS: ImageModel[] = [
       qualityOptions: ["1k", "2k", "4k"],
       promptMaxLength: 20000,
     },
+  },
+
+  // ── Venice AI — hosted uncensored models ──────────────────────────────────────
+  // Venice hosts a fixed catalogue (no custom checkpoints or LoRA files), but it
+  // carries several community NSFW checkpoints plus uncensored open-weight models.
+  // Prices are $0.01–$0.06/image. Sizing follows the model's own constraints.
+  {
+    id: "venice-krea-2-turbo",
+    apiId: "krea-2-turbo",
+    name: "Krea 2 Turbo (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "5:4", "4:3", "3:2", "16:9", "21:9", "4:5", "3:4", "2:3", "9:16", "9:21"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "krea-2-turbo",
+      sizing: "resolution",
+      resolutions: ["1K", "2K"],
+      promptMaxLength: 5000,
+      steps: 8,
+      cfgScale: 1,
+      safeMode: false,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 5000 },
+  },
+  {
+    id: "venice-lustify-v8",
+    apiId: "lustify-v8",
+    name: "Lustify v8 (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "5:4", "4:3", "3:2", "16:9", "21:9", "4:5", "3:4", "2:3", "9:16", "9:21"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "lustify-v8",
+      sizing: "pixels",
+      promptMaxLength: 1500,
+      steps: 30,
+      cfgScale: 7,
+      safeMode: false,
+      negativePrompt: "blurry, low quality, deformed, watermark, text",
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 1500 },
+  },
+  {
+    id: "venice-lustify-v7",
+    apiId: "lustify-v7",
+    name: "Lustify v7 (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "5:4", "4:3", "3:2", "16:9", "21:9", "4:5", "3:4", "2:3", "9:16", "9:21"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "lustify-v7",
+      sizing: "pixels",
+      promptMaxLength: 1500,
+      steps: 20,
+      cfgScale: 7,
+      safeMode: false,
+      negativePrompt: "blurry, low quality, deformed, watermark, text",
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 1500 },
+  },
+  {
+    id: "venice-chroma",
+    apiId: "chroma",
+    name: "Chroma (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "5:4", "4:3", "3:2", "16:9", "21:9", "4:5", "3:4", "2:3", "9:16", "9:21"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "chroma",
+      sizing: "pixels",
+      promptMaxLength: 7500,
+      steps: 10,
+      cfgScale: 4,
+      safeMode: false,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 7500 },
+  },
+  {
+    id: "venice-anime-wai",
+    apiId: "wai-Illustrious",
+    name: "Anime WAI Illustrious (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "wai-Illustrious",
+      sizing: "pixels",
+      promptMaxLength: 1500,
+      steps: 25,
+      cfgScale: 7,
+      safeMode: false,
+      negativePrompt: "worst quality, low quality, bad anatomy, watermark, signature",
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 1500 },
+  },
+  {
+    id: "venice-qwen-image-3",
+    apiId: "qwen-image-3",
+    name: "Qwen Image 3 (Venice)",
+    provider: "Venice AI",
+    providerChoices: ["venice"],
+    ratios: ["1:1", "3:2", "16:9", "21:9", "9:16", "2:3", "3:4", "4:5"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: true,
+    venice: {
+      apiId: "qwen-image-3",
+      sizing: "resolution",
+      resolutions: ["1K", "2K"],
+      promptMaxLength: 10000,
+      steps: 20,
+      safeMode: false,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 10000 },
+  },
+
+  // ── CivitAI — community checkpoints on Civitai's workers ─────────────────────
+  // These run the exact checkpoint files from civitai.com, including NSFW merges
+  // that Venice does not host. Paid in Buzz; `allowMatureContent` forces yellow.
+  {
+    id: "civitai-fineporn-v6-turbo",
+    apiId: "civitai-fineporn-v6-turbo",
+    name: "FinePorn v6 Turbo (CivitAI)",
+    provider: "CivitAI",
+    providerChoices: ["civitai"],
+    ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: false,
+    civitai: {
+      air: "urn:air:krea2:diffusionmodel:civitai:2762538@3467058",
+      engine: "comfy",
+      ecosystem: "krea2",
+      model: "turbo",
+      width: 1152,
+      height: 1152,
+      pixelSizes: {
+        "1:1": "1152x1152",
+        "4:3": "1280x960",
+        "3:4": "960x1280",
+        "3:2": "1344x896",
+        "2:3": "896x1344",
+        "16:9": "1536x864",
+        "9:16": "864x1536",
+        "21:9": "1536x640",
+      },
+      steps: 10,
+      cfgScale: 1,
+      sampler: "er_sde",
+      scheduler: "beta",
+      negativePrompt: "blurry, low quality, deformed, watermark, text",
+      promptMaxLength: 10000,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 10000 },
+  },
+  {
+    id: "civitai-fineporn-v6-turbo-fp8",
+    apiId: "civitai-fineporn-v6-turbo-fp8",
+    name: "FinePorn v6 Turbo FP8 (CivitAI)",
+    provider: "CivitAI",
+    providerChoices: ["civitai"],
+    ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: false,
+    civitai: {
+      air: "urn:air:krea2:diffusionmodel:civitai:2762538@3457661",
+      engine: "comfy",
+      ecosystem: "krea2",
+      model: "turbo",
+      width: 1152,
+      height: 1152,
+      pixelSizes: {
+        "1:1": "1152x1152",
+        "4:3": "1280x960",
+        "3:4": "960x1280",
+        "3:2": "1344x896",
+        "2:3": "896x1344",
+        "16:9": "1536x864",
+        "9:16": "864x1536",
+        "21:9": "1536x640",
+      },
+      steps: 10,
+      cfgScale: 1,
+      sampler: "er_sde",
+      scheduler: "beta",
+      negativePrompt: "blurry, low quality, deformed, watermark, text",
+      promptMaxLength: 10000,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 10000 },
+  },
+  {
+    id: "civitai-wai-illustrious",
+    apiId: "civitai-wai-illustrious",
+    name: "WAI Illustrious v16 (CivitAI)",
+    provider: "CivitAI",
+    providerChoices: ["civitai"],
+    ratios: ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"],
+    supportsImages: false,
+    maxImages: 0,
+    supportsQuality: false,
+    civitai: {
+      air: "urn:air:sdxl:checkpoint:civitai:827184@2514310",
+      engine: "sdcpp",
+      ecosystem: "sdxl",
+      width: 1024,
+      height: 1024,
+      pixelSizes: {
+        "1:1": "1024x1024",
+        "4:3": "1152x896",
+        "3:4": "896x1152",
+        "3:2": "1216x832",
+        "2:3": "832x1216",
+        "16:9": "1344x768",
+        "9:16": "768x1344",
+      },
+      steps: 25,
+      cfgScale: 7,
+      sampleMethod: "euler_a",
+      schedule: "karras",
+      negativePrompt: "worst quality, low quality, bad anatomy, watermark",
+      promptMaxLength: 10000,
+    },
+    apiInput: { aspectRatioKey: "aspect_ratio", promptMaxLength: 10000 },
   },
 ];
 

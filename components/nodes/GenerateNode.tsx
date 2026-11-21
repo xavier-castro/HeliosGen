@@ -16,7 +16,7 @@ type GenerateNodeType = Node<NodeData, "generateNode">;
 
 import { ShieldBan } from "lucide-react";
 import { IMAGE_MODELS, AZURE_POPULAR_SIZES, validateAzureCustomSize } from "@/lib/modelConfig";
-import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProviderChoice } from "@/lib/providers";
+import { PROVIDERS, ProviderId, getModelProvider, setModelProvider, modelHasProviderChoice, getProviderChoices } from "@/lib/providers";
 import { useGeneratingBorderAnimation } from "@/lib/useGeneratingBorderAnimation";
 import MissingInputWarning from "./MissingInputWarning";
 
@@ -391,6 +391,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
   }, [model]);
   const isAzureProvider = currentProvider === "azure";
   const isCodexProvider = currentProvider === "codex";
+  const providerChoices = getProviderChoices(model);
 
   const promptInfo = (() => {
     const promptEdge = edges.find((e) => e.target === id && e.targetHandle === "prompt");
@@ -646,6 +647,10 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
       try { return (JSON.parse(localStorage.getItem("aiui-model-providers") ?? "{}")[model] ?? "kie") === "codex"; }
       catch { return false; }
     })();
+    const providerForModel = (() => {
+      try { return JSON.parse(localStorage.getItem("aiui-model-providers") ?? "{}")[model] ?? "kie"; }
+      catch { return "kie"; }
+    })();
 
     const payload = {
       model,
@@ -653,6 +658,7 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
       imageUrls: orderedUrls,
       aspectRatio,
       quality,
+      provider: providerForModel,
       ...(isAzure ? {
         azureBaseUrl, azureDeployment, azureQuality, azureResolution,
         ...(aspectRatio === "custom" ? {
@@ -1142,7 +1148,9 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
               </button>
               {providerPopup.visible && (
                 <div className={`absolute bottom-full left-0 mb-2 w-36 bg-[#111622] border border-[#1E2840] rounded-md overflow-hidden z-[1002] shadow-2xl ${providerPopup.className}`}>
-                  {PROVIDERS.map((p) => (
+                  {providerChoices.map((choice) => {
+                    const p = PROVIDERS.find((x) => x.id === choice)!;
+                    return (
                     <button
                       key={p.id}
                       onMouseDown={(e) => e.stopPropagation()}
@@ -1152,7 +1160,8 @@ export default function GenerateNode({ id, data, selected }: NodeProps<GenerateN
                       <ProviderBrandIcon id={p.id} />
                       {p.label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1573,6 +1582,21 @@ function ProviderBrandIcon({ id }: { id: ProviderId }) {
       <svg className="shrink-0" width="11" height="11" viewBox="0 0 256 199">
         <path d="M118.432 187.698c32.89-5.81 60.055-10.618 60.367-10.684l.568-.12l-31.052-36.935c-17.078-20.314-31.051-37.014-31.051-37.11c0-.182 32.063-88.477 32.243-88.792c.06-.105 21.88 37.567 52.893 91.32c29.035 50.323 52.973 91.815 53.195 92.203l.405.707l-98.684-.012l-98.684-.013l59.8-10.564zM0 176.435c0-.052 14.631-25.451 32.514-56.442l32.514-56.347l37.891-31.799C123.76 14.358 140.867.027 140.935.001c.069-.026-.205.664-.609 1.534s-18.919 40.582-41.145 88.25l-40.41 86.67l-29.386.037c-16.162.02-29.385-.005-29.385-.057z" fill="#0089D6" fillRule="nonzero" />
       </svg>
+    );
+  }
+  if (id === "venice") {
+    return (
+      <svg className="shrink-0" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#A855F7" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 5l9 14 9-14" />
+        <path d="M8 5h8" />
+      </svg>
+    );
+  }
+  if (id === "civitai") {
+    return (
+      <span className="text-[#2DD4BF] shrink-0" style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "11px", height: "11px", fontSize: "10px", fontWeight: 700 }}>
+        C
+      </span>
     );
   }
   return null;

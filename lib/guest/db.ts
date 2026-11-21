@@ -252,6 +252,36 @@ export function deleteAzureApiKey(): void {
   deleteSetting("azure_api_key");
 }
 
+export function getVeniceApiKey(): string | null {
+  const dbKey = getSetting("venice_api_key");
+  if (dbKey) return dbKey;
+  const envKey = process.env.VENICE_API_KEY ?? "";
+  return envKey || null;
+}
+
+export function setVeniceApiKey(key: string): void {
+  setSetting("venice_api_key", key);
+}
+
+export function deleteVeniceApiKey(): void {
+  deleteSetting("venice_api_key");
+}
+
+export function getCivitaiApiKey(): string | null {
+  const dbKey = getSetting("civitai_api_key");
+  if (dbKey) return dbKey;
+  const envKey = process.env.CIVITAI_API_KEY ?? "";
+  return envKey || null;
+}
+
+export function setCivitaiApiKey(key: string): void {
+  setSetting("civitai_api_key", key);
+}
+
+export function deleteCivitaiApiKey(): void {
+  deleteSetting("civitai_api_key");
+}
+
 // ── Folders ────────────────────────────────────────────────────────────────
 
 function rowToFolder(r: Record<string, unknown>): FolderRecord {

@@ -148,6 +148,19 @@ You only pay for what you generate.
 - Z-Image (Z-AI)
 - Grok Imagine (X)
 
+## Venice AI (uncensored, hosted)
+Per-model backends are selectable in **Settings → Image Models** (and the
+backend pill on a Generate node). Venice hosts a fixed catalogue — no custom
+checkpoints or LoRA files — and bills per image ($0.01–$0.06).
+- Krea 2 Turbo, Lustify v7 / v8, Chroma, Anime WAI Illustrious, Qwen Image 3
+- GPT Image 2, Nano Banana 2 / Pro, Seedream 5.0 Pro, Grok Imagine (Venice instead of Kie.ai)
+
+## CivitAI (community checkpoints)
+Runs the exact checkpoint files from civitai.com on Civitai's own workers via the
+[Orchestration API](https://developer.civitai.com/orchestration), so no local GPU is
+needed. Paid in Buzz; NSFW output requires yellow Buzz.
+- FinePorn v6 Turbo (BF16 / FP8), WAI Illustrious v16
+
 ## Videos
 - Veo 3.1 Lite / Fast / Quality, Gemini Omni Video (Google)
 - Kling 3.0, Kling 3.0 Turbo, Motion Control 2.6 / 3.0 (Kling)
@@ -156,6 +169,13 @@ You only pay for what you generate.
 - HappyHorse (Alibaba)
 
 More models are coming.
+
+### Backends
+
+Every image model has a backend: **Kie.ai** (default), **Azure Foundry**, **Codex CLI**,
+**Venice AI**, or **CivitAI**. Models with more than one backend show a picker in
+Settings and on the node; single-backend models route there automatically. Keys live
+in **Settings → API Keys** (stored in the local SQLite DB, never sent to the browser).
 
 ---
 
